@@ -4,6 +4,11 @@ import torch.nn.functional as F
 from matplotlib.lines import Line2D
 import torch
 from utils import corners3d, rotate, perspective, bbox_corners
+
+import cv2
+import torch.nn.functional as F
+from matplotlib.lines import Line2D
+import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 def draw_projected_box3d(image, corners3d, color, thickness=2):
     """Draw 3d bounding box in image
@@ -27,7 +32,7 @@ def draw_projected_box3d(image, corners3d, color, thickness=2):
     corners3d = corners3d.astype(np.int32)
     rect = np.copy(image)
     cv2.rectangle(rect, (corners3d[5, 0], corners3d[5, 1]), (corners3d[2, 0], corners3d[2, 1]), color, -1)
-    image = cv2.addWeighted(image, 0.8, rect, 0.2, 0)
+    image = cv2.addWeighted(image, 1, rect, 0, 0)
 
     for k in range(4):
         i, j = k, (k + 1) % 4
@@ -39,28 +44,8 @@ def draw_projected_box3d(image, corners3d, color, thickness=2):
 
     return image
 
-def choose_color1(name):
-    colors = {
-        'Car': (0, 0, 255),
-        'Van': (255, 192, 203),
-        'Truck': (255, 255, 0),
-        'Pedestrian': (128, 0, 128),
-        'Cyclist': (0, 255, 0)
-    }
-    return colors.get(name, (255, 255, 255))  # default color: white
 
-def choose_color2(name):
-    colors = {
-        'Car': 'tab:blue',
-        'Van': 'tab:orange',
-        'Truck': 'tab:pink',
-        'Pedestrian': 'tab:purple',
-        'Cyclist': 'tab:green'
-    }
-    return colors.get(name, 'tab:gray')  # default color: gray
-
-
-def draw_3d_boxes(img, objects, calib):
+def draw_3d_boxes(img, objects, calib, label = 'train'):
     """Draw 3D bounding box with each object in image
     Args:
         image (np.array): RGB image
@@ -72,22 +57,26 @@ def draw_3d_boxes(img, objects, calib):
     img = np.array(img)  # convert to NumPy array
 
     for object in objects:
-        if object.classname in ['Car', 'Van', 'Truck', 'Pedestrian','Cyclist']: 
-            if object.score is not None: score = object.score
-            if isinstance(score, torch.Tensor): score = round(score.item(), 2)
-            name = object.classname
-            color = choose_color1(name)
-            corners_3d = corners3d(object, calib)
+        if object.score is not None: score = object.score
+        if isinstance(score, torch.Tensor): score = round(score.item(), 2)
+        name = object.classname
+        if label == 'train':
+            color = (0, 0, 255)
+        else:
+            color = (255, 0, 0)
 
-            # Draw 3d bounding box
-            img = draw_projected_box3d(img, corners_3d, color)
+        corners_3d = corners3d(object, calib)
 
-            # Find location for label
-            points = [(int(corners_3d[i, 0]), int(corners_3d[i, 1])) for i in range(4)]
-            min_x = min(point[0] for point in points)
-            max_y = max(point[1] for point in points)
+        # Draw 3d bounding box
+        img = draw_projected_box3d(img, corners_3d, color)
+
+        # Find location for label
+        points = [(int(corners_3d[i, 0]), int(corners_3d[i, 1])) for i in range(4)]
+        min_x = min(point[0] for point in points)
+        max_y = max(point[1] for point in points)
           
-            # Show label
+        # Show label
+        if label == 'train':
             label_size, baseline = cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
             score_size, baseline2 = cv2.getTextSize(str(score) + " ", cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
             cv2.rectangle(img, (min_x, max_y+10), (min_x+label_size[0]+score_size[0], max_y-label_size[1]+10), (0,0,0), cv2.FILLED)
@@ -121,8 +110,8 @@ def vis_score(image, calib, objects, grid, cmap='binary', ax=None):
     ax.set_aspect('equal')
 
     # Plot true objects
-    for i, obj in enumerate(objects):
-        color = choose_color2(obj.classname)
+    for i, obj in enumerate(objects):     
+        color = 'tab:blue'
 
         # Get corners of 3D bounding box
         corners = bbox_corners(obj)[:, [0, 2]]
@@ -138,66 +127,64 @@ def vis_score(image, calib, objects, grid, cmap='binary', ax=None):
     # Return the modified axis object
     return ax
 
-#For Display
-def compute_iou(obj1, obj2):
-    """Compute IoU between two bounding boxes.
+def vis_score_test(image, calib, objects_predict, objects, grid, cmap='binary', ax=None):
+    score = torch.randn(1, 1, grid.shape[0]-1, grid.shape[1]-1)  # adjust size to match X and Y dimensions of grid
+    score = score[0, 0] * 0
 
-    Args:
-    obj1 (ndarray): a numpy array of shape (4,) representing the coordinates (x1, y1, x2, y2) of the first bounding box
-    obj2 (ndarray): a numpy array of shape (4,) representing the coordinates (x1, y1, x2, y2) of the second bounding box
+    grid = grid.cpu().detach().numpy()
 
-    Returns:
-    iou (float): the Intersection over Union (IoU) between the two bounding boxes
-    """
-    corners1 = bbox_corners(obj1)[:4, [0, 2]]
-    corners2 = bbox_corners(obj2)[:4, [0, 2]]
+    # Create a new axis if one is not provided
+    if ax is None:
+        _, ax = plt.subplots()
 
-    x1 = min(corners1[0][0], corners1[1][0], corners1[2][0], corners1[3][0])
-    y1 = min(corners1[0][1], corners1[1][1], corners1[2][1], corners1[3][1])
-    x2 = max(corners1[0][0], corners1[1][0], corners1[2][0], corners1[3][0])
-    y2 = max(corners1[0][1], corners1[1][1], corners1[2][1], corners1[3][1])
+    # Plot scores
+    ax.clear()
+    ax.pcolormesh(grid[..., 0], grid[..., 2], score, cmap=cmap, vmin=0, vmax=1)
+    ax.set_aspect('equal')
+
+    # Plot true objects
+    for i, obj in enumerate(objects_predict):
+        color = 'tab:blue'  # Màu xanh dương
+
+        # Get corners of 3D bounding box
+        corners = bbox_corners(obj)[:, [0, 2]]
+        for i in range(4):
+            start = corners[i]
+            end = corners[(i + 1) % 4]
+            ax.add_line(Line2D(*zip(start, end), c=color))
+
+    for i, obj in enumerate(objects):
+        color = 'tab:red'  # Màu đỏ
+
+        # Get corners of 3D bounding box
+        corners = bbox_corners(obj)[:, [0, 2]]
+        for i in range(4):
+            start = corners[i]
+            end = corners[(i + 1) % 4]
+            ax.add_line(Line2D(*zip(start, end), c=color))
+
+    ax.set_aspect('equal')
+    # Format axes
+    ax.set_xlabel('x (m)')
+    ax.set_ylabel('z (m)')
+    # Return the modified axis object
+    return ax
+
+def test(image, calib, objects_predict, objects, grid):
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(40, 8))
+    #Visualize bounding box
+    img = draw_3d_boxes(image[0].permute(1, 2, 0).cpu().numpy().copy(), objects_predict[0], calib[0], label = 'train')
+    img = draw_3d_boxes(img, objects[0], calib[0], label = 'test')
+    ax1.imshow(img)
+    ax1.set_title('3D bounding box')
     
-    x3 = min(corners2[0][0], corners2[1][0], corners2[2][0], corners2[3][0])
-    y3 = min(corners2[0][1], corners2[1][1], corners2[2][1], corners2[3][1])
-    x4 = max(corners2[0][0], corners2[1][0], corners2[2][0], corners2[3][0])
-    y4 = max(corners2[0][1], corners2[1][1], corners2[2][1], corners2[3][1])
+    # Add legend patches
+    true_box_patch = patches.Rectangle((0, 0), 1, 1, linewidth=1, edgecolor='r', facecolor='r', label='Ground truth')
+    predict_box_patch = patches.Rectangle((0, 0), 1, 1, linewidth=1, edgecolor='b', facecolor='b', label='Prediction')
+    ax1.legend(handles=[true_box_patch, predict_box_patch], loc='lower left', fontsize='large')
     
-    intersection_w = max(0, min(x2, x4) - max(x1, x3))
-    intersection_h = max(0, min(y2, y4) - max(y1, y3))
-    intersection_area = intersection_w * intersection_h
-
-    box1_area = (x2 - x1) * (y2 - y1)
-    box2_area = (x4 - x3) * (y4 - y3)
-    union_area = box1_area + box2_area - intersection_area
-
-    iou = intersection_area / union_area
-
-    return iou
-
-def nms(objects, iou_threshold=0.1):
-    """Performs non-maximum suppression on a list of object detections.
-
-    Args:
-        objects (list): list of object detections, each containing a 'score' attribute
-        iou_threshold (float): threshold for the IOU overlap between two detections to consider them redundant
-
-    Returns:
-        nms_objects (list): list of object detections after NMS, sorted in decreasing order of 'score'
-    """
-    # Sort by population
-    sorted_objects = sorted(objects, key=lambda obj: obj.score, reverse=True)
-
-    # Initialize list of detections after NMS
-    nms_objects = []
-
-    # Loop over detections
-    while len(sorted_objects) > 0:
-        # Keep detection with highest obj.score
-        best_object = sorted_objects.pop(0)
-        nms_objects.append(best_object)
-
-        # Compute IOU between best_detection and remaining detections
-        ious = [compute_iou(best_object, d) for d in sorted_objects]
-        # Remove detections that overlap with best_detection
-        sorted_objects = [d for i, d in enumerate(sorted_objects) if ious[i] <= iou_threshold]
-    return nms_objects
+    #Visualize score
+    vis_score_test(image[0], calib[0], objects_predict[0], objects[0], grid[0], ax=ax2)
+    ax2.set_title('Bird-eye view')
+    plt.savefig('/content/drive/MyDrive/3d_object_detection/3d_boxes_with_score.png')
+    plt.show()

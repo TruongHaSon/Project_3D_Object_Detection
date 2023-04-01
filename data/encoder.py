@@ -10,10 +10,9 @@ ObjectData = namedtuple('ObjectData',
 
 class ObjectEncoder(object):
 
-    def __init__(self, classnames= ['Car', 'Van', 'Truck', 'Pedestrian','Cyclist'], pos_std=[.5, .36, .5], 
-                log_dim_mean=[[0.42, 0.48, 1.35], [0.42, 0.48, 1.35], [0.42, 0.48, 1.35], [0.42, 0.48, 1.35], [0.42, 0.48, 1.35]], 
-                log_dim_std=[[.085, .067, .115], [.085, .067, .115], [.085, .067, .115], [.085, .067, .115], [.085, .067, .115]], 
-                sigma=1., nms_thresh=0.05):
+    def __init__(self, classnames=['Car'], pos_std=[.5, .36, .5], 
+                 log_dim_mean=[[0.42, 0.48, 1.35]], 
+                 log_dim_std=[[.085, .067, .115]], sigma=1., nms_thresh=0.05):
         
         self.classnames = classnames
         self.nclass = len(classnames)
@@ -23,7 +22,8 @@ class ObjectEncoder(object):
 
         self.sigma = sigma
         self.nms_thresh = nms_thresh
-
+        
+    
     def encode_batch(self, objects, grids):
         '''Encode data in each batch based on objects and ground grid.
         
@@ -37,16 +37,10 @@ class ObjectEncoder(object):
             ang_offsets (torch.tensor): tensor of orientation offsets of shape [batch_size, num_classes, 2, height-1, width-1]
             mask (torch.tensor): tensor of mask of shape [batch_size, 1, height-1, width-1]
         '''
-      
         # Encode batch element by element
         batch_encoded = [self.encode(objs, grid) for objs, grid 
                          in zip(objects, grids)]
         
-        batch_encoded = []
-        for objs, grid in zip(objects, grids):
-            # Append the object instance to the objects list
-            batch_encoded.append(self.encode(objs, grid))
-
         # Transpose batch
         return [torch.stack(t) for t in zip(*batch_encoded)]
 
@@ -67,20 +61,18 @@ class ObjectEncoder(object):
         # Filter objects by class name
         objects = [obj for obj in objects if obj.classname in self.classnames]
 
+
         # Skip empty examples
         if len(objects) == 0:
             return self._encode_empty(grid)
         
         # Construct tensor representation of objects
-        class_id_mapping = {'Car': 0, 'Van': 1, 'Truck': 2, 'Pedestrian': 3, 'Cyclist': 4}
-        classids = [class_id_mapping.get(obj.classname, -1) for obj in objects]
-        classids = torch.tensor(classids).to(device)
-
-        #Get positions, dimensions and angles
+        classids = torch.tensor([self.classnames.index(obj.classname) 
+                                for obj in objects], device=grid.device)
         positions = grid.new([obj.position for obj in objects])
         dimensions = grid.new([obj.dimensions for obj in objects])
         angles = grid.new([obj.angle for obj in objects])
-        
+
         # Assign objects to locations on the grid
         mask, indices = self._assign_to_grid(
             classids, positions, dimensions, angles, grid)
@@ -92,20 +84,21 @@ class ObjectEncoder(object):
         pos_offsets = self._encode_positions(positions, indices, grid)
         dim_offsets = self._encode_dimensions(classids, dimensions, indices)
         ang_offsets = self._encode_angles(angles, indices)
-        return heatmaps, pos_offsets, dim_offsets, ang_offsets, mask
+
+        return heatmaps, pos_offsets, dim_offsets, ang_offsets, mask   
+    
 
     def _assign_to_grid(self, classids, positions, dimensions, angles, grid):
-        '''Assign objects to grid.
-
+        '''Return positive locations and the id of the corresponding instance (True/False) and (1/0)
         Args:
             classids (torch.Tensor): tensor with shape [number of objects] and each element = 0
             positions (torch.Tensor): tensor with shape [number of objects, 3], representing the 3D object location in camera coordinates [-pi..pi].
             dimensions (torch.Tensor): tensor with shape [number of objects, 3], representing the 3D object dimensions: height, width, length (in meters).
             angles (torch.Tensor): tensor with shape [number of objects], representing the observation angle of object ranging from [-pi..pi].
-            grid (torch.Tensor): ground grid with shape [120, 120, 3] and y = 1.74.
+            grid (torch.Tensor): ground grid with shape [height, width, 3] and y = 1.74.
         Returns:
-            labels (torch.Tensor): boolean tensor with shape [num_classes, 119, 119]. Each element is True if the corresponding grid cells lie within an object.
-            indices (torch.Tensor): binary tensor with shape [num_classes, 119, 119]. Each element is 1 if the corresponding grid cells lie within an object, and 0 otherwise.
+            labels (torch.Tensor): boolean tensor with shape [num_classes, height, width]. Each element is True if the corresponding grid cells lie within an object.
+            indices (torch.Tensor): binary tensor with shape [num_classes, height, width]. Each element is 1 if the corresponding grid cells lie within an object, and 0 otherwise.
         '''      
         # Compute grid centers
         centers = (grid[1:, 1:, :] + grid[:-1, :-1, :]) / 2.
@@ -125,16 +118,16 @@ class ObjectEncoder(object):
         # Return positive locations and the id of the corresponding instance 
         labels, indices = torch.max(class_inside, dim=0)
         return labels, indices
+    
 
     def _encode_heatmaps(self, classids, positions, grid):
         """Computes the confidence map S(x, z) for object detection.
-
         Args:
-            classids (torch.Tensor): Tensor with shape (num_objects,) containing the class ids of objects (integers from 0 to num_classes-1).
+            classids (torch.Tensor): tensor with shape [number of objects] and each element = 0.
             positions (torch.Tensor): Tensor with shape (num_objects, 3) containing the 3D objects location in camera coordinates (in meters).
-            grid (torch.Tensor): Ground grid with y = 1.74 and shape torch.Size([120, 120, 3]).
+            grid (torch.Tensor): Ground grid with y = 1.74 and shape torch.Size([height, width, 3]).
         Returns:
-            heatmaps (torch.Tensor): Tensor with shape torch.Size([num_classes, 119, 119]) containing the confidence map for each class.
+            heatmaps (torch.Tensor): Tensor with shape torch.Size([num_classes, height-1, width-1]) containing the confidence map for each class.
         """
         centers = (grid[1:, 1:, [0, 2]] + grid[:-1, :-1, [0, 2]]) / 2.
         positions = positions.view(-1, 1, 1, 3)[..., [0, 2]]
@@ -142,10 +135,10 @@ class ObjectEncoder(object):
         # Compute per-object heatmaps
         sqr_dists = (positions - centers).pow(2).sum(dim=-1) 
         obj_heatmaps = torch.exp(-0.5 * sqr_dists / self.sigma ** 2)
+
         heatmaps = obj_heatmaps.new_zeros(self.nclass, *obj_heatmaps.size()[1:])
-        
         for i in range(self.nclass):
-            mask = (classids == i)
+            mask = classids == i
             if mask.any():
                 heatmaps[i] = torch.max(obj_heatmaps[mask], dim=0)[0]
         return heatmaps
@@ -156,32 +149,29 @@ class ObjectEncoder(object):
         
         Args:
             positions (torch.Tensor): 3D objects location in camera coordinates (in meters) with shape torch.Size([num_objects, 3])
-            indices_mask (torch.Tensor): Mask with element = 1 if grid cells which lie within each object, with shape torch.Size([1, 119, 119])
-            grid (torch.Tensor): Ground grid with y = 1.74, with shape torch.Size([120, 120, 3])
+            indices_mask (torch.Tensor): Mask with element = 1 if grid cells which lie within each object, with shape torch.Size([1, height-1, width-1])
+            grid (torch.Tensor): Ground grid with y = 1.74, with shape torch.Size([height, width, 3])
         Returns:
-            pos_offsets (torch.Tensor): Tensor with predicted offsets, with shape torch.Size([num_classes, 3, 119, 119])
+            pos_offsets (torch.Tensor): Tensor with predicted offsets, with shape torch.Size([num_classes, 3, height-1, width-1])
         """
         # Compute the center of each grid cell
-        centers1 = (grid[1:, 1:] + grid[:-1, :-1]) / 2.
-        centers1 = centers1.unsqueeze(0)
-        centers = centers1.detach().clone()
-        for i in range(4):
-            centers = torch.cat((centers ,centers1), dim = 0)
+        centers = (grid[1:, 1:] + grid[:-1, :-1]) / 2.
+      
         # Encode positions into the grid
         C, D, W = indices.size()
         positions = positions.index_select(0, indices.view(-1)).view(C, D, W, 3)
+
         # Compute relative offsets and normalize
         pos_offsets = (positions - centers) / self.pos_std.to(positions)
-        
         return pos_offsets.permute(0, 3, 1, 2)
-
+    
     def _encode_dimensions(self, classids, dimensions, indices):
         ''' Predicts the logarithmic scale offset ∆dim between the assigned ground truth object i 
         with dimensions di and the mean dimensions over all objects of the given class
         Args:
-            classids (torch.Tensor): toTensor with shape (num_objects,) containing the class ids of objects (integers from 0 to num_classes-1).
+            classids (torch.Tensor): tensor with shape [number of objects] and each element = 0.
             dimensions (torch.Tensor): 3D object dimensions: height, width, length (in meters) of object torch.Size([number of car, 3])
-            indices (torch.Tensor): mask with element = 1 if grid cells which lie within each object torch.Size([5, 119, 119])
+            indices (torch.Tensor): mask with element = 1 if grid cells which lie within each object torch.Size([num_classes, height-1, width-1])
         Return:
             dim_offsets (torch.tensor): tensor of dimension offsets of shape [num_classes, 3, height-1, width-1]
         '''
@@ -197,6 +187,7 @@ class ObjectEncoder(object):
         dim_offsets = dim_offsets.index_select(0, indices.view(-1))
         return dim_offsets.view(C, D, W, 3).permute(0, 3, 1, 2)
     
+
     def _encode_angles(self, angles, indices):
         '''Predicts the sine and cosine of the objects orientation θi about the y-axis.
         Args:
@@ -210,38 +201,17 @@ class ObjectEncoder(object):
         sin = torch.sin(angles)[indices]
         cos = torch.cos(angles)[indices]
         return torch.stack([cos, sin], dim=1)
-
+    
 
     def _encode_empty(self, grid):
         depth, width, _ = grid.size()
-        '''If there is no object in image, return empty tensors
-        Args:
-            grid: ground grid with y = 1.74 torch.Size([grid_size, grid_size, 3])
-        Returns:
-            heatmaps (torch.tensor): tensor of heatmaps of shape [num_classes, height-1, width-1]
-            pos_offsets (torch.tensor): tensor of position offsets of shape [num_classes, 3, height-1, width-1]
-            dim_offsets (torch.tensor): tensor of dimension offsets of shape [num_classes, 3, height-1, width-1]
-            ang_offsets (torch.tensor): tensor of orientation offsets of shape [num_classes, 2, height-1, width-1]
-            mask (torch.tensor): tensor of mask of shape [num_classes, height-1, width-1]
-        '''
-        # Generate empty tensors
-        num_classes = 5
-        heatmaps = grid.new_zeros((num_classes, depth-1, width-1))
-        pos_offsets = grid.new_zeros((num_classes, 3, depth-1, width-1))
-        dim_offsets = grid.new_zeros((num_classes, 3, depth-1, width-1))
-        ang_offsets = grid.new_zeros((num_classes, 2, depth-1, width-1))
-        mask = grid.new_zeros((num_classes, depth-1, width-1)).bool()
-        return heatmaps, pos_offsets, dim_offsets, ang_offsets, mask
-    
-
-    def decode(self, heatmaps, pos_offsets, dim_offsets, ang_offsets, grid):
         '''Decode data into objects using the given data.
         Args:
-            heatmaps: torch.Size([num_classes, 159, 159])
-            pos_offsets: torch.Size([num_classes, 3, 159, 159])
-            dim_offsets: torch.Size([num_classes, 3, 159, 159])
-            ang_offsets: torch.Size([num_classes, 2, 159, 159])
-            grid: ground grid with y = 1.74 torch.Size([160, 160, 3]) 
+            heatmaps: torch.Size([num_classes, height-1, width-1])
+            pos_offsets: torch.Size([num_classes, 3, height-1, width-1])
+            dim_offsets: torch.Size([num_classes, 3, height-1, width-1])
+            ang_offsets: torch.Size([num_classes, 2, height-1, width-1])
+            grid: ground grid with y = 1.74 torch.Size([height-1, width-1, 3]) 
         Returns:
             objects: A list of objects, where each object is a dictionary with the following keys:
                 classname (str): the class name of the object
@@ -249,6 +219,27 @@ class ObjectEncoder(object):
                 dimensions (torch.Tensor): 3D object dimensions: height, width, length (in meters)
                 angle (torch.Tensor): the orientation of each object in radians
                 score (float): the confidence score of each object
+        '''
+        # Generate empty tensors
+        heatmaps = grid.new_zeros((self.nclass, depth-1, width-1))
+        pos_offsets = grid.new_zeros((self.nclass, 3, depth-1, width-1))
+        dim_offsets = grid.new_zeros((self.nclass, 3, depth-1, width-1))
+        ang_offsets = grid.new_zeros((self.nclass, 2, depth-1, width-1))
+        mask = grid.new_zeros((self.nclass, depth-1, width-1)).bool()
+        return heatmaps, pos_offsets, dim_offsets, ang_offsets, mask
+    
+
+    def decode(self, heatmaps, pos_offsets, dim_offsets, ang_offsets, grid):
+        '''
+        decode data --> objects base of given data
+        Args:
+          heatmaps: torch.Size([1, height-1, width-1])
+          pos_offsets: torch.Size([1, 3, height-1, width-1])
+          dim_offsets: torch.Size([1, 3, height-1, width-1])
+          ang_offsets: torch.Size([1, 2, height-1, width-1])
+          grid: ground grid with y = 1.74 torch.Size([height, width, 3]) 
+        Return:
+          objects: list of objects with each of object has ['classname', 'position', 'dimensions', 'angle', 'score']
         '''
         # Apply NMS to find positive heatmap locations
         peaks, scores, classids = self._decode_heatmaps(heatmaps)
@@ -258,7 +249,6 @@ class ObjectEncoder(object):
         dimensions = self._decode_dimensions(dim_offsets, peaks)
         angles = self._decode_angles(ang_offsets, peaks)
 
-        # Bring 
         objects = list()
         for score, cid, pos, dim, ang in zip(scores, classids, positions, 
                                              dimensions, angles):
@@ -268,18 +258,18 @@ class ObjectEncoder(object):
         return objects
     
 
-    def decode_batch(self, heatmaps, pos_offsets, dim_offsets, ang_offsets, 
-                     grids):
+    def decode_batch(self, heatmaps, pos_offsets, dim_offsets, ang_offsets, grids):
         '''Decode batch of data --> objects base of given data
         Args:
-            heatmaps: list of heatmaps, each with shape torch.Size([num_classes, 159, 159])
-            pos_offsets: list of position offsets, each with shape torch.Size([num_classes, 3, 159, 159])
-            dim_offsets: list of dimension offsets, each with shape torch.Size([num_classes, 3, 159, 159])
-            ang_offsets: list of angle offsets, each with shape torch.Size([num_classes, 2, 159, 159])
-            grids: list of ground grids, each with shape torch.Size([160, 160, 3])
+            heatmaps: list of heatmaps, each with shape torch.Size([num_classes, height-1, width-1])
+            pos_offsets: list of position offsets, each with shape torch.Size([num_classes, 3, height-1, width-1])
+            dim_offsets: list of dimension offsets, each with shape torch.Size([num_classes, 3, height-1, width-1])
+            ang_offsets: list of angle offsets, each with shape torch.Size([num_classes, 2, height-1, width-1])
+            grids: list of ground grids, each with shape torch.Size([height, width, 3])
         Return:
-            objects: list of lists of objects. Each list of objects contains the objects for the corresponding input image in the batch. Each object has ['classname', 'position', 'dimensions', 'angle', 'score']
+            objects: list of lists of objects. Each object has ['classname','truncated', 'occlusion', 'position', 'dimensions', 'angle', 'score']
         '''
+
         boxes = list()
         for hmap, pos_off, dim_off, ang_off, grid in zip(heatmaps, pos_offsets, 
                                                          dim_offsets, 
@@ -291,9 +281,9 @@ class ObjectEncoder(object):
     def _decode_heatmaps(self, heatmaps):
         '''Decode heatmap to find object locations and class ids
         Args:
-            heatmaps: torch tensor, the confidence map S(x, z) with shape (batch_size, 159, 159)
+            heatmaps: torch tensor, the confidence map S(x, z) with shape (batch_size, height-1, width-1)
         Return:
-            peaks: the boolean mask of peak locations with shape (batch_size, 159, 159)
+            peaks: the boolean mask of peak locations with shape (batch_size, height-1, width-1)
             scores: Score of each object with shape (number of objects,)
             classids: Index of each object to class with shape (number of objects,)
         '''
@@ -305,16 +295,16 @@ class ObjectEncoder(object):
 
     def _decode_positions(self, pos_offsets, peaks, grid):
         '''This function decodes the 3D positions of objects in camera coordinates from their offset values and the ground grid.
-
         Args:
-            pos_offsets (torch.tensor): the offset values for the positions with shape [num_classes, 3, 159, 159].
-            peaks (torch.tensor): the boolean mask of peak locations with shape [num_classes, 159, 159].
-            grid (torch.tensor): the ground grid with shape [120, 120, 3].
+            pos_offsets (torch.tensor): the offset values for the positions with shape [num_classes, 3, height-1, width-1].
+            peaks (torch.tensor): the boolean mask of peak locations with shape [num_classes, height-1, width-1].
+            grid (torch.tensor): the ground grid with shape [height, width, 3].
         Returns:
             positions[peaks] (torch.tensor): the 3D object location in camera coordinates [-pi..pi] of each object for the peak locations with shape [number of objects, 3].
-        '''   
+        '''  
         # Compute the center of each grid cell
         centers = (grid[1:, 1:] + grid[:-1, :-1]) / 2.
+
         # Un-normalize grid offsets
         positions = pos_offsets.permute(0, 2, 3, 1) * self.pos_std.to(grid) \
             + centers
@@ -322,28 +312,24 @@ class ObjectEncoder(object):
     
     def _decode_dimensions(self, dim_offsets, peaks):
         '''Decode the 3D object dimensions (height, width, length) from the dimension offset predictions.
-
         Args:
-            dim_offsets (torch.tensor): dimension offset predictions. torch.Size([num_classes, 3, 159, 159])
-            peaks (torch.tensor): boolean mask of peak locations. torch.Size([num_classes, 159, 159])
+            dim_offsets (torch.tensor): dimension offset predictions. torch.Size([num_classes, 3, height-1, width-1])
+            peaks (torch.tensor): boolean mask of peak locations. torch.Size([num_classes, height-1, width-1])
         Returns:
             dimensions (torch.tensor): 3D object dimensions: height, width, length (in meters). torch.Size([number of objects, 3])
         '''
         dim_offsets = dim_offsets.permute(0, 2, 3, 1)
-        log_dim_std = self.log_dim_std.view(5, 1, 1, 3)
-        log_dim_mean = self.log_dim_mean.view(5, 1, 1, 3)
         dimensions = torch.exp(
-            dim_offsets * log_dim_std.to(dim_offsets) \
-                + log_dim_mean.to(dim_offsets))
+            dim_offsets * self.log_dim_std.to(dim_offsets) \
+                + self.log_dim_mean.to(dim_offsets))
         return dimensions[peaks].cpu()
     
     def _decode_angles(self, angle_offsets, peaks):
         """Decode the observation angle of the object based on the angle offsets and peak locations.
-
         Args:
-            angle_offsets (torch.Tensor): Tensor of shape (num_classes, 2, 159, 159) containing the sin and cos offsets
+            angle_offsets (torch.Tensor): Tensor of shape (num_classes, 2, height-1, width-1) containing the sin and cos offsets
                 for the observation angle of the object.
-            peaks (torch.Tensor): Boolean mask of peak locations with shape (num_classes, 159, 159).
+            peaks (torch.Tensor): Boolean mask of peak locations with shape (num_classes, height-1, width-1).
         Returns:
             angles (torch.Tensor): Observation angle of object in radians in the range [-pi, pi] for each class
         """
@@ -351,13 +337,12 @@ class ObjectEncoder(object):
         return torch.atan2(sin, cos)[peaks].cpu()
 
 
-def non_maximum_suppression(heatmaps, sigma=1.0, thresh=0.05, max_peaks= 10):
+def non_maximum_suppression(heatmaps, sigma=1.0, thresh=0.6, max_peaks= 10):
     '''Suppresses non-maximum values in the heatmap and returns the boolean mask of peak locations.
-
     Args:
-        heatmaps (torch.Tensor): input tensor of size [num_classes, 119, 119] containing heatmaps for each class
+        heatmaps (torch.Tensor): input tensor of size [num_classes, height-1, width-1] containing heatmaps for each class
         sigma (float): the standard deviation of the Gaussian kernel used for smoothing (default: 1.0)
-        thresh (float): the threshold for peak detection (default: 0.05)
+        thresh (float): the threshold for peak detection (default: 0.6)
         max_peaks (int): the maximum number of peaks to keep (default: 10)
     Returns:
         peaks (torch.Tensor): a boolean mask of peak locations of the same size as input heatmap tensor
