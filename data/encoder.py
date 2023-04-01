@@ -98,7 +98,7 @@ class ObjectEncoder(object):
             grid (torch.Tensor): ground grid with shape [height, width, 3] and y = 1.74.
         Returns:
             labels (torch.Tensor): boolean tensor with shape [num_classes, height, width]. Each element is True if the corresponding grid cells lie within an object.
-            indices (torch.Tensor): binary tensor with shape [num_classes, height, width]. Each element is 1 if the corresponding grid cells lie within an object, and 0 otherwise.
+            indices (torch.Tensor): id of object (0 to num_objects - 1) with shape [num_classes, height-1, width-1]. 
         '''      
         # Compute grid centers
         centers = (grid[1:, 1:, :] + grid[:-1, :-1, :]) / 2.
@@ -114,7 +114,6 @@ class ObjectEncoder(object):
         class_mask = classids.view(-1, 1) == torch.arange(
             len(self.classnames)).type_as(classids)
         class_inside = inside.unsqueeze(1) & class_mask[:, :, None, None]
-
         # Return positive locations and the id of the corresponding instance 
         labels, indices = torch.max(class_inside, dim=0)
         return labels, indices
@@ -131,7 +130,6 @@ class ObjectEncoder(object):
         """
         centers = (grid[1:, 1:, [0, 2]] + grid[:-1, :-1, [0, 2]]) / 2.
         positions = positions.view(-1, 1, 1, 3)[..., [0, 2]]
-
         # Compute per-object heatmaps
         sqr_dists = (positions - centers).pow(2).sum(dim=-1) 
         obj_heatmaps = torch.exp(-0.5 * sqr_dists / self.sigma ** 2)
@@ -149,7 +147,7 @@ class ObjectEncoder(object):
         
         Args:
             positions (torch.Tensor): 3D objects location in camera coordinates (in meters) with shape torch.Size([num_objects, 3])
-            indices_mask (torch.Tensor): Mask with element = 1 if grid cells which lie within each object, with shape torch.Size([1, height-1, width-1])
+            indices (torch.Tensor): id of object (0 to num_objects - 1) with shape [num_classes, height-1, width-1]. 
             grid (torch.Tensor): Ground grid with y = 1.74, with shape torch.Size([height, width, 3])
         Returns:
             pos_offsets (torch.Tensor): Tensor with predicted offsets, with shape torch.Size([num_classes, 3, height-1, width-1])
@@ -171,7 +169,7 @@ class ObjectEncoder(object):
         Args:
             classids (torch.Tensor): tensor with shape [number of objects] and each element = 0.
             dimensions (torch.Tensor): 3D object dimensions: height, width, length (in meters) of object torch.Size([number of car, 3])
-            indices (torch.Tensor): mask with element = 1 if grid cells which lie within each object torch.Size([num_classes, height-1, width-1])
+            indices (torch.Tensor): id of object (0 to num_objects - 1) with shape [num_classes, height-1, width-1]. 
         Return:
             dim_offsets (torch.tensor): tensor of dimension offsets of shape [num_classes, 3, height-1, width-1]
         '''
@@ -191,12 +189,11 @@ class ObjectEncoder(object):
     def _encode_angles(self, angles, indices):
         '''Predicts the sine and cosine of the objects orientation θi about the y-axis.
         Args:
-            angles(torch.Tensor): Observation angle of object raning [-pi..pi] with torch.Size([num_boxes])
-            indices(torch.Tensor): mask with element = 1 if grid cells which lie within each object torch.Size([num_boxes, grid_size, grid_size])
+            angles(torch.Tensor): Observation angle of object raning [-pi..pi] with torch.Size([num_objects])
+            indices (torch.Tensor): id of object (0 to num_objects - 1) with shape [num_classes, height-1, width-1]. 
         Return:
-            objects orientation: torch.Size([num_boxes, 2, grid_size, grid_size])
+            objects orientation: torch.Size([num_classes, 2, height-1, width-1])
         '''
-
         # Compute rotation vector
         sin = torch.sin(angles)[indices]
         cos = torch.cos(angles)[indices]
