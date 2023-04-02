@@ -4,6 +4,7 @@ import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset
 from collections import namedtuple
+from utils import make_grid
 
 ObjectData = namedtuple('ObjectData', 
     ['classname','truncated', 'occlusion', 'position', 'dimensions', 'angle', 'score'])
@@ -11,33 +12,15 @@ ObjectData = namedtuple('ObjectData',
 KITTI_CLASS_NAMES = ['Car', 'Van', 'Truck', 'Pedestrian', 'Person_sitting',
                      'Cyclist', 'Tram', 'Misc', 'DontCare']
 
-def make_grid(grid_size, grid_offset, grid_res):
-    """
-    Args:
-        grid_size: size of grid.
-        grid_offset (int): grid offset.
-        grid_res (float): resolution of grid.
-    Returns:
-        grid: a grid where y is fixed, only has x_coords
-            and z_coords. and the shape is (160, 160, 3)
-    """
-    depth, width = grid_size
-    xoff, yoff, zoff = grid_offset
-
-    xcoords = torch.arange(0., width, grid_res) + xoff
-    zcoords = torch.arange(0., depth, grid_res) + zoff
-
-    zz, xx = torch.meshgrid(zcoords, xcoords)
-    return torch.stack([xx, torch.full_like(xx, yoff), zz], dim=-1)
-
 class KittiObjectDataset(Dataset):
     """KITTI Object dataset.
+
     Args:
         kitti_root (str): root of the data. 
         split (str): train or test set.
         grid_size (tuple): size of grid in meter. Default (80., 80.)
-        grid_res: grid solution. Default is 0.5m.
-        y_offset: offset of y axis.
+        grid_res (float): grid solution. Default is 0.5m.
+        y_offset (float): offset of y axis.
     """
     def __init__(self, kitti_root, 
                 split='train', 
@@ -59,6 +42,7 @@ class KittiObjectDataset(Dataset):
     
     def __getitem__(self, index):
         """Get item from dataset.
+
         Args:
             index (int): idx of an image in split file.
         Returns:
@@ -66,7 +50,7 @@ class KittiObjectDataset(Dataset):
             image: PIL image
             calib (torch.tensor): calib matrix with the shape (3, 4)
             objects (list): list of labels
-            grid: 3D grid.
+            grid (torch.tensor): 3D grid with fixed y.
         """
         # Load image
         idx = self.indices[index]
@@ -91,6 +75,7 @@ class KittiObjectDataset(Dataset):
 
 def read_split(filename):
     """Read a list of indices.
+
     Args:
         filename (str): name of file.
     Returns:
@@ -100,8 +85,7 @@ def read_split(filename):
         return [int(val) for val in f]
 
 def read_kitti_calib(filename):
-    """
-    Read the camera calibration matrix P2 from a text file
+    """Read the camera calibration matrix P2 from a text file.
     
     Args:
         filename (str): name of file.
@@ -120,11 +104,12 @@ def read_kitti_calib(filename):
         'Could not find entry for P2 in calib file {}'.format(filename))
     
 def read_kitti_objects(filename):
-    """
+    """Read Kitti object. One row corresponds to one object
+
     Args:
         filename (str): name of file.
     Returns:
-        list of objects with each of object class 
+        objects (list): list of objects with each of object class 
             ['classname','truncated', 'occlusion', 'position', 'dimensions', 'angle', 'score']
     """
     objects = list()
@@ -136,14 +121,14 @@ def read_kitti_objects(filename):
             if not (14 <= len(objdata) <= 15): 
                 raise IOError('Invalid KITTI object file {}'.format(filename))
             # Parse object data
-            if objdata[0] == 'Car':
-                objects.append(ObjectData(
-                    classname=objdata[0],
-                    truncated = float(objdata[1]),
-                    occlusion = float(objdata[2]),
-                    dimensions=[float(objdata[10]), float(objdata[8]), float(objdata[9])],
-                    position=[float(p) for p in objdata[11:14]],
-                    angle=float(objdata[14]),
-                    score=float(objdata[15]) if len(objdata) == 16 else 1.
-            ))
+            objects.append(ObjectData(
+                classname=objdata[0],
+                truncated = float(objdata[1]),
+                occlusion = float(objdata[2]),
+                dimensions=[float(objdata[10]), float(objdata[8]), float(objdata[9])],
+                position=[float(p) for p in objdata[11:14]],
+                angle=float(objdata[14]),
+                score=float(objdata[15]) if len(objdata) == 16 else 1.
+        ))
+
     return objects

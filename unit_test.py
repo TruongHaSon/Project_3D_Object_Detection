@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 
 if __name__ == "__main__":
     # Dataset unit-test
+    # kitti_root = "/home/giang/Documents/KITTI"
     kitti_root = "/home/son/Documents/Project/KITTI"
     dataset = KittiObjectDataset(kitti_root)
     idx, image, calib, objects, grid = dataset[0]
@@ -26,9 +27,9 @@ if __name__ == "__main__":
     ax1.imshow(img)
     ax1.set_title('3D bounding box')
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    cv2.imwrite("3d_boxes.jpg", img_rgb)
+    cv2.imwrite("./results/3d_boxes.jpg", img_rgb)
     #Visualize score
     vis_score(image, calib, objects, grid, ax=ax2)
     ax2.set_title('Bird_eye_view')
-    plt.savefig('3d_boxes_with_bird_eye_view.png')
+    plt.savefig('./results/3d_boxes_with_bird_eye_view.png')
     plt.show()

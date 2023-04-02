@@ -4,25 +4,10 @@ from PIL import ImageOps
 import torch
 from torch.utils.data import Dataset
 from collections import namedtuple
+from utils import perspective
 
 ObjectData = namedtuple('ObjectData', 
     ['classname','truncated', 'occlusion', 'position', 'dimensions', 'angle', 'score'])
-
-KITTI_CLASS_NAMES = ['Car', 'Van', 'Truck', 'Pedestrian', 'Person_sitting',
-                     'Cyclist', 'Tram', 'Misc', 'DontCare']
-
-def perspective(matrix, vector):
-    """Projext a 3D vector to 2D image using transformation matrix.
-    Args:
-        matrix (torch.tensor): transformation matrix with the shape (3, 4)
-        vector: 3D vector with the shape of (3)
-    Return:
-        2D vector in 2D space (u/z, v/z)
-    """
-    vector = vector.unsqueeze(-1) #[3, 1]
-    homogenous = torch.matmul(matrix[..., :-1], vector) + matrix[..., [-1]]
-    homogenous = homogenous.squeeze(-1)
-    return homogenous[..., :-1] / homogenous[..., [-1]]
 
 def random_crop(image, calib, objects, output_size):
     """Random crop images.

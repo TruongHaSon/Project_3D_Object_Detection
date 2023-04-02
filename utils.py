@@ -31,14 +31,15 @@ def perspective(matrix, vector):
 
 
 def make_grid(grid_size, grid_offset, grid_res):
-    """Create a 3D grid with specified size, offset, and resolution.
-    
+    """ Make a uniform 3D grid where y is fixed.
+    The order index is (z, x)
+
     Args:
-        grid_size: size of grid.
-        grid_offset (int): grid offset.
+        grid_size (tuple): size of grid in meter.
+        grid_offset (float): grid offset.
         grid_res (float): resolution of grid.
     Returns:
-        grid: a grid where y is fixed, only has x_coords
+        grid (torch.tensor): a grid where y is fixed, only has x_coords
             and z_coords. and the shape is (160, 160, 3)
     """
     depth, width = grid_size
@@ -46,8 +47,8 @@ def make_grid(grid_size, grid_offset, grid_res):
 
     xcoords = torch.arange(0., width, grid_res) + xoff
     zcoords = torch.arange(0., depth, grid_res) + zoff
+    zz, xx = torch.meshgrid(zcoords, xcoords, indexing='ij')
 
-    zz, xx = torch.meshgrid(zcoords, xcoords)
     return torch.stack([xx, torch.full_like(xx, yoff), zz], dim=-1)
 
 def gaussian_kernel(sigma=1., trunc=2.):
