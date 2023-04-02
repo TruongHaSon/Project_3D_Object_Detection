@@ -19,8 +19,8 @@ def random_crop(image, calib, objects, output_size):
         output_size (tuple): expected output size
     Returns:
         image: output PIL image
-        calib: calibration matrix
-        cropped_objects: labels after transformation
+        calib (torch.tensor): calibration matrix
+        cropped_objects (list): a list of labels after transformation
     """
     # Randomize bounding box coordinates
     width, height = image.size
@@ -58,7 +58,7 @@ def random_scale(image, calib, scale_range=(0.8, 1.2)):
         objects (list): list of labels
     Returns:
         image: Scaled PIL image
-        calib: Scaled calibration matrix
+        calib (torch.tensor): Scaled calibration matrix
     """
 
     scale = random.uniform(*scale_range)
@@ -75,6 +75,7 @@ def random_scale(image, calib, scale_range=(0.8, 1.2)):
 
 def random_flip(image, calib, objects):
     """Randomly flips the input image and modifies the calibration matrix and object positions accordingly.
+
     Args:
         image: PIL image
         calib (torch.tensor): calibration matrix
@@ -109,6 +110,7 @@ def random_flip(image, calib, objects):
 
 def random_crop_grid(grid, objects, crop_size):
     """Randomly crops a grid of 3D points, making sure to include at least one object if possible.
+
     Args:
         grid (torch.Tensor): A grid of 3D points. Dimensions are (depth, width, 3).
         objects (list]): list of labels
@@ -116,6 +118,7 @@ def random_crop_grid(grid, objects, crop_size):
     Returns:
         cropped_grid (torch.Tensor): A cropped grid of 3D points. Dimensions are (depth, width, 3).
     """
+
     # Get input and output dimensions
     grid_d, grid_w, _ = grid.size()
     crop_w, crop_d = crop_size
@@ -175,11 +178,11 @@ class AugmentedObjectDataset(Dataset):
         idx, image, calib, objects, grid = self.dataset[index]
 
         # Apply image augmentation
-        # image, calib = random_scale(image, calib, self.scale_range)
+        image, calib = random_scale(image, calib, self.scale_range)
         image, calib, objects = random_crop(image, calib, objects, self.image_size)
-        # image, calib, objects = random_flip(image, calib, objects)
+        image, calib, objects = random_flip(image, calib, objects)
 
         # Augment grid
-        # grid = random_crop_grid(grid, objects, self.grid_size)
+        grid = random_crop_grid(grid, objects, self.grid_size)
 
         return idx, image, calib, objects, grid
